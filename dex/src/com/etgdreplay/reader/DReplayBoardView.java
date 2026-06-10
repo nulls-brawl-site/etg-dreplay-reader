@@ -1,15 +1,19 @@
 package com.etgdreplay.reader;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.RadialGradient;
 import android.graphics.RectF;
 import android.graphics.Shader;
+import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,17 +39,24 @@ public final class DReplayBoardView extends View {
     private final int cardRed = Color.rgb(213, 63, 70);
     private final int cardBlack = Color.rgb(31, 42, 54);
     private final int accent = Color.rgb(87, 190, 255);
+    private final int gold = Color.rgb(242, 190, 74);
     private int step;
     private BoardState state;
     private StepListener stepListener;
     private float downX;
     private float downY;
+    private ValueAnimator stepAnimator;
+    private float transitionProgress = 1f;
+    private long effectStartMs;
+    private int effectDirection = 1;
+    private DReplayParser.Action effectAction;
 
     public DReplayBoardView(Context context, DReplayParser.Replay replay) {
         super(context);
         this.replay = replay;
         this.step = 0;
         this.state = buildState(0);
+        this.effectStartMs = SystemClock.uptimeMillis();
         setWillNotDraw(false);
         setFocusable(true);
         textPaint.setSubpixelText(true);
@@ -68,9 +79,13 @@ public final class DReplayBoardView extends View {
         if (clamped == step && state != null) {
             return;
         }
+        int oldStep = step;
+        effectDirection = clamped >= oldStep ? 1 : -1;
         step = clamped;
         state = buildState(step);
-        invalidate();
+        effectAction = step > 0 && step <= replay.actions.size() ? replay.actions.get(step - 1) : null;
+        effectStartMs = SystemClock.uptimeMillis();
+        startStepAnimation();
         if (stepListener != null) {
             stepListener.onStepChanged(this);
         }
@@ -105,7 +120,23 @@ public final class DReplayBoardView extends View {
         drawPlayers(canvas, width, height);
         drawTable(canvas, width, height);
         drawDeck(canvas, width, height);
+        drawStepEffects(canvas, width, height);
+        if (step == getMaxStep() && getMaxStep() > 0) {
+            drawFinalBanner(canvas, width, height);
+        }
         drawFooter(canvas, width, height);
+        if (transitionProgress < 1f || effectProgress() < 1f) {
+            postInvalidateOnAnimation();
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        if (stepAnimator != null) {
+            stepAnimator.cancel();
+            stepAnimator = null;
+        }
+        super.onDetachedFromWindow();
     }
 
     @Override
@@ -138,6 +169,15 @@ public final class DReplayBoardView extends View {
         paint.setShader(new LinearGradient(0, 0, 0, height, greenTop, greenBottom, Shader.TileMode.CLAMP));
         canvas.drawRoundRect(new RectF(0, 0, width, height), dp(18), dp(18), paint);
         paint.setShader(null);
+
+        float phase = (SystemClock.uptimeMillis() % 5200L) / 5200f;
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(Color.argb(22, 255, 255, 255));
+        for (int i = 0; i < 4; i++) {
+            float x = ((phase + i * 0.29f) % 1f) * width;
+            float y = height * (0.20f + 0.18f * i);
+            canvas.drawCircle(x, y, dp(2 + i), paint);
+        }
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(1));
@@ -237,6 +277,7 @@ public final class DReplayBoardView extends View {
         float cardW = cardWidth(width) * 1.08f;
         float cardH = cardHeight(cardW);
         float centerY = height * 0.50f;
+        drawTableGlow(canvas, width, height, centerY);
         if (state.table.isEmpty()) {
             rect.set(dp(34), centerY - dp(35), width - dp(34), centerY + dp(35));
             paint.setColor(Color.argb(70, 0, 0, 0));
@@ -300,7 +341,8 @@ public final class DReplayBoardView extends View {
         rect.set(pad, top, width - pad, height - pad);
         paint.setColor(panelColor);
         canvas.drawRoundRect(rect, dp(13), dp(13), paint);
-        float progress = getMaxStep() == 0 ? 0f : step / (float) getMaxStep();
+        float visualStep = Math.max(0f, step - 1f + transitionProgress);
+        float progress = getMaxStep() == 0 ? 0f : Math.min(1f, visualStep / (float) getMaxStep());
         rect.set(pad + dp(10), top + dp(8), width - pad - dp(10), top + dp(12));
         paint.setColor(Color.argb(70, 255, 255, 255));
         canvas.drawRoundRect(rect, dp(2), dp(2), paint);
@@ -326,8 +368,9 @@ public final class DReplayBoardView extends View {
         paint.setColor(cardShadow);
         canvas.drawRoundRect(rect, dp(8), dp(8), paint);
         rect.set(x, y, x + w, y + h);
-        paint.setColor(cardWhite);
+        paint.setShader(new LinearGradient(x, y, x + w, y + h, Color.WHITE, cardWhite, Shader.TileMode.CLAMP));
         canvas.drawRoundRect(rect, dp(8), dp(8), paint);
+        paint.setShader(null);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(trump ? dp(2) : dp(1));
         paint.setColor(trump || (replay.trump != null && card.suit == replay.trump.suit) ? Color.rgb(238, 189, 68) : cardBorder);
@@ -337,6 +380,12 @@ public final class DReplayBoardView extends View {
         int color = card.isRed() ? cardRed : cardBlack;
         textPaint.setColor(color);
         textPaint.setFakeBoldText(true);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setTextSize(w * 0.74f);
+        textPaint.setColor(Color.argb(card.isRed() ? 28 : 22, Color.red(color), Color.green(color), Color.blue(color)));
+        canvas.drawText(card.suitGlyph(), x + w * 0.52f, y + h * 0.63f, textPaint);
+        textPaint.setTextAlign(Paint.Align.LEFT);
+        textPaint.setColor(color);
         textPaint.setTextSize(w * 0.28f);
         canvas.drawText(card.rankLabel(), x + w * 0.14f, y + h * 0.30f, textPaint);
         textPaint.setTextSize(w * 0.34f);
@@ -347,6 +396,10 @@ public final class DReplayBoardView extends View {
         canvas.drawText(card.rankLabel(), x + w * 0.86f, y + h * 0.84f, textPaint);
         textPaint.setTextAlign(Paint.Align.LEFT);
         textPaint.setFakeBoldText(false);
+        if (trump || (replay.trump != null && card.suit == replay.trump.suit)) {
+            paint.setColor(Color.argb(42, 242, 190, 74));
+            canvas.drawCircle(x + w * 0.82f, y + h * 0.18f, w * 0.10f, paint);
+        }
         canvas.restore();
     }
 
@@ -371,6 +424,246 @@ public final class DReplayBoardView extends View {
         path.close();
         paint.setColor(Color.argb(130, 255, 255, 255));
         canvas.drawPath(path, paint);
+    }
+
+    private void startStepAnimation() {
+        if (stepAnimator != null) {
+            stepAnimator.cancel();
+        }
+        transitionProgress = 0f;
+        stepAnimator = ValueAnimator.ofFloat(0f, 1f);
+        stepAnimator.setDuration(520L);
+        stepAnimator.setInterpolator(new DecelerateInterpolator(1.45f));
+        stepAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+            @Override
+            public void onAnimationUpdate(ValueAnimator animation) {
+                Object value = animation.getAnimatedValue();
+                transitionProgress = value instanceof Float ? (Float) value : 1f;
+                invalidate();
+            }
+        });
+        stepAnimator.start();
+    }
+
+    private void drawTableGlow(Canvas canvas, int width, int height, float centerY) {
+        float pulse = effectProgress();
+        int baseAlpha = 38 + (int) (20f * Math.sin((SystemClock.uptimeMillis() % 1400L) / 1400f * Math.PI * 2f));
+        paint.setShader(new RadialGradient(
+                width / 2f,
+                centerY,
+                width * 0.52f,
+                Color.argb(Math.max(18, baseAlpha), 110, 235, 201),
+                Color.TRANSPARENT,
+                Shader.TileMode.CLAMP
+        ));
+        rect.set(dp(18), centerY - height * 0.24f, width - dp(18), centerY + height * 0.24f);
+        canvas.drawOval(rect, paint);
+        paint.setShader(null);
+
+        if (pulse < 1f && effectAction != null) {
+            float eased = easeOut(pulse);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(2));
+            paint.setColor(Color.argb((int) (110f * (1f - pulse)), 255, 255, 255));
+            float inset = dp(38) + eased * dp(36);
+            rect.set(inset, centerY - dp(48) - eased * dp(22), width - inset, centerY + dp(48) + eased * dp(22));
+            canvas.drawRoundRect(rect, dp(22), dp(22), paint);
+            paint.setStyle(Paint.Style.FILL);
+        }
+    }
+
+    private void drawStepEffects(Canvas canvas, int width, int height) {
+        float p = effectProgress();
+        if (effectAction == null || p >= 1f) {
+            return;
+        }
+        if (effectAction.code == DReplayParser.ACTION_TAKE) {
+            drawGatherEffect(canvas, width, height, p, true);
+        } else if (effectAction.code == DReplayParser.ACTION_DONE) {
+            drawDoneStamp(canvas, width, height, p, "БИТО");
+        } else {
+            drawFlyingActionCard(canvas, width, height, p);
+        }
+        drawSparkles(canvas, width, height, p);
+    }
+
+    private void drawFlyingActionCard(Canvas canvas, int width, int height, float p) {
+        String raw = effectAction.code == DReplayParser.ACTION_BEAT ? effectAction.arg2 : effectAction.arg1;
+        DReplayParser.Card card = DReplayParser.parseCard(raw);
+        if (card == null) {
+            return;
+        }
+        float cardW = cardWidth(width) * 1.18f;
+        float cardH = cardHeight(cardW);
+        float[] from = playerAnchor(effectAction.player, width, height, cardW, cardH);
+        float[] to = tableAnchor(effectAction, width, height, cardW, cardH);
+        if (effectDirection < 0) {
+            float[] tmp = from;
+            from = to;
+            to = tmp;
+        }
+        float eased = easeOut(p);
+        float x = lerp(from[0], to[0], eased);
+        float y = lerp(from[1], to[1], eased) - (float) Math.sin(Math.PI * eased) * dp(68);
+        float scale = 0.92f + (float) Math.sin(Math.PI * eased) * 0.16f;
+        float rotate = lerp(effectDirection > 0 ? -18f : 14f, effectAction.code == DReplayParser.ACTION_BEAT ? 12f : -5f, eased);
+        int alpha = p < 0.78f ? 245 : (int) (245f * (1f - (p - 0.78f) / 0.22f));
+        drawCardLayer(canvas, card, x, y, cardW, cardH, rotate, alpha, scale);
+    }
+
+    private void drawGatherEffect(Canvas canvas, int width, int height, float p, boolean take) {
+        float eased = easeOut(p);
+        float cardW = cardWidth(width) * 0.95f;
+        float cardH = cardHeight(cardW);
+        float startX = width / 2f - cardW / 2f;
+        float startY = height * 0.50f - cardH / 2f;
+        float[] target = playerAnchor(effectAction.player, width, height, cardW, cardH);
+        if (!take) {
+            target[0] = width / 2f - cardW / 2f;
+            target[1] = height * 0.50f - cardH / 2f;
+        }
+        for (int i = 0; i < 4; i++) {
+            float lag = Math.max(0f, Math.min(1f, eased - i * 0.08f));
+            float x = lerp(startX + i * dp(8), target[0] + i * dp(5), lag);
+            float y = lerp(startY - i * dp(4), target[1] + i * dp(2), lag);
+            int layer = canvas.saveLayerAlpha(x - dp(8), y - dp(8), x + cardW + dp(8), y + cardH + dp(8), (int) (190f * (1f - p * 0.25f)), Canvas.ALL_SAVE_FLAG);
+            drawCardBack(canvas, x, y, cardW, cardH);
+            canvas.restoreToCount(layer);
+        }
+        drawDoneStamp(canvas, width, height, p, "ВЗЯЛ");
+    }
+
+    private void drawDoneStamp(Canvas canvas, int width, int height, float p, String text) {
+        float eased = easeOut(p);
+        float cx = width / 2f;
+        float cy = height * 0.50f;
+        int alpha = (int) (210f * (1f - Math.max(0f, p - 0.62f) / 0.38f));
+        if (alpha <= 0) {
+            return;
+        }
+        canvas.save();
+        canvas.scale(0.82f + eased * 0.24f, 0.82f + eased * 0.24f, cx, cy);
+        rect.set(cx - dp(58), cy - dp(22), cx + dp(58), cy + dp(22));
+        paint.setColor(Color.argb(alpha, 7, 33, 37));
+        canvas.drawRoundRect(rect, dp(16), dp(16), paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(2));
+        paint.setColor(Color.argb(alpha, 255, 255, 255));
+        canvas.drawRoundRect(rect, dp(16), dp(16), paint);
+        paint.setStyle(Paint.Style.FILL);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setTextSize(dp(19));
+        textPaint.setFakeBoldText(true);
+        textPaint.setColor(Color.argb(alpha, 255, 255, 255));
+        canvas.drawText(text, cx, cy + dp(7), textPaint);
+        textPaint.setTextAlign(Paint.Align.LEFT);
+        textPaint.setFakeBoldText(false);
+        canvas.restore();
+    }
+
+    private void drawSparkles(Canvas canvas, int width, int height, float p) {
+        float eased = easeOut(p);
+        float cx = width / 2f;
+        float cy = height * 0.50f;
+        int alpha = (int) (150f * (1f - p));
+        if (alpha <= 0) {
+            return;
+        }
+        for (int i = 0; i < 18; i++) {
+            double angle = i * 2.39996323 + effectAction.code * 0.19;
+            float distance = dp(18) + eased * dp(118) * (0.42f + (i % 5) * 0.13f);
+            float x = cx + (float) Math.cos(angle) * distance;
+            float y = cy + (float) Math.sin(angle) * distance * 0.54f;
+            int color = i % 3 == 0 ? gold : (i % 3 == 1 ? accent : Color.WHITE);
+            paint.setColor(Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color)));
+            canvas.drawCircle(x, y, dp(1.8f + (i % 4) * 0.5f), paint);
+        }
+    }
+
+    private void drawFinalBanner(Canvas canvas, int width, int height) {
+        String line = "ИГРА ОКОНЧЕНА";
+        if (replay.loser >= 0) {
+            int winner = replay.players.size() == 2 ? (replay.loser == 0 ? 1 : 0) : -1;
+            if (winner >= 0) {
+                line = "ПОБЕДА · " + replay.playerName(winner);
+            } else {
+                line = "ПРОИГРАЛ · " + replay.playerName(replay.loser);
+            }
+        }
+        float p = Math.min(1f, (SystemClock.uptimeMillis() - effectStartMs) / 700f);
+        float scale = 0.96f + (1f - Math.abs(1f - p * 2f)) * 0.04f;
+        float cx = width / 2f;
+        float cy = height * 0.34f;
+        float w = Math.min(width - dp(46), textWidth(line, dp(15)) + dp(44));
+        canvas.save();
+        canvas.scale(scale, scale, cx, cy);
+        rect.set(cx - w / 2f, cy - dp(23), cx + w / 2f, cy + dp(23));
+        paint.setShader(new LinearGradient(rect.left, rect.top, rect.right, rect.bottom, Color.argb(232, 31, 94, 124), Color.argb(232, 18, 54, 76), Shader.TileMode.CLAMP));
+        canvas.drawRoundRect(rect, dp(17), dp(17), paint);
+        paint.setShader(null);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(dp(1));
+        paint.setColor(Color.argb(120, 255, 255, 255));
+        canvas.drawRoundRect(rect, dp(17), dp(17), paint);
+        paint.setStyle(Paint.Style.FILL);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setTextSize(dp(15));
+        textPaint.setFakeBoldText(true);
+        textPaint.setColor(Color.WHITE);
+        canvas.drawText(line, cx, cy + dp(5), textPaint);
+        textPaint.setTextAlign(Paint.Align.LEFT);
+        textPaint.setFakeBoldText(false);
+        canvas.restore();
+    }
+
+    private void drawCardLayer(Canvas canvas, DReplayParser.Card card, float x, float y, float w, float h, float rotate, int alpha, float scale) {
+        if (alpha <= 0) {
+            return;
+        }
+        canvas.save();
+        canvas.scale(scale, scale, x + w / 2f, y + h / 2f);
+        int layer = canvas.saveLayerAlpha(x - dp(26), y - dp(30), x + w + dp(26), y + h + dp(30), Math.min(255, alpha), Canvas.ALL_SAVE_FLAG);
+        drawCard(canvas, card, x, y, w, h, rotate, false);
+        canvas.restoreToCount(layer);
+        canvas.restore();
+    }
+
+    private float[] playerAnchor(int player, int width, int height, float cardW, float cardH) {
+        float x = width / 2f - cardW / 2f;
+        float y;
+        if (player == 1) {
+            y = dp(118);
+        } else if (player == 0) {
+            y = height - dp(168);
+        } else {
+            y = height / 2f - cardH / 2f;
+        }
+        return new float[]{x, y};
+    }
+
+    private float[] tableAnchor(DReplayParser.Action action, int width, int height, float cardW, float cardH) {
+        float x = width / 2f - cardW / 2f;
+        float y = height * 0.50f - cardH / 2f;
+        if (action.code == DReplayParser.ACTION_BEAT) {
+            x += cardW * 0.42f;
+            y += dp(8);
+        } else if (action.code == DReplayParser.ACTION_TRANSFER) {
+            x -= cardW * 0.28f;
+        }
+        return new float[]{x, y};
+    }
+
+    private float effectProgress() {
+        return Math.min(1f, Math.max(0f, (SystemClock.uptimeMillis() - effectStartMs) / 680f));
+    }
+
+    private float easeOut(float value) {
+        float inv = 1f - Math.max(0f, Math.min(1f, value));
+        return 1f - inv * inv * inv;
+    }
+
+    private float lerp(float from, float to, float progress) {
+        return from + (to - from) * progress;
     }
 
     private BoardState buildState(int untilStep) {

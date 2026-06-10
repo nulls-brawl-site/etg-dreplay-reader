@@ -15,7 +15,7 @@ public final class DReplayBridge {
     }
 
     public static String version() {
-        return "1.1.0";
+        return "1.2.0";
     }
 
     public static boolean isDReplayName(String value) {
