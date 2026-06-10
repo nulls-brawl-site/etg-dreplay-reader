@@ -21,7 +21,7 @@ __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgdreplay.reader.DReplayBridge"
-DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-dreplay-reader/master/build/etg-dreplay-reader.dex?v=1.2.0"
+DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-dreplay-reader/02ec7b094bd872de3b2b06cda1548e65b4157620/build/etg-dreplay-reader.dex"
 DEX_SHA256 = "b5da1cfc6ea7d9c204ea760488ae95ab73195081e54f689950b04546f30f85ed"
 
 
