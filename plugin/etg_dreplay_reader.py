@@ -15,14 +15,14 @@ __id__ = "etg_dreplay_reader"
 __name__ = "DReplay Reader"
 __description__ = "Opens .dreplay Durak replay files inside ExteraGram."
 __author__ = "@bsod4ik_plugins"
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __icon__ = "msg_view_file"
 __app_version__ = ">=12.5.1"
 __sdk_version__ = ">=1.4.3.3"
 
 ENTRY_CLASS = "com.etgdreplay.reader.DReplayBridge"
-DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-dreplay-reader/master/build/etg-dreplay-reader.dex"
-DEX_SHA256 = "75b06e0c45335d6962753fd0e8cf2fb080eab36c95d884c7acb5c6ba379f6974"
+DEX_URL = "https://raw.githubusercontent.com/nulls-brawl-site/etg-dreplay-reader/master/build/etg-dreplay-reader.dex?v=1.1.0"
+DEX_SHA256 = "253379ec7aea0b2e5a9c0ad5a496b775b8f33b5190418fa8cd5bb14a2487eb28"
 
 
 class _BeforeOpenForViewFile(MethodHook):

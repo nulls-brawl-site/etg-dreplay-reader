@@ -9,12 +9,13 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -37,7 +38,7 @@ public final class DReplayViewer {
                 if (activity.isFinishing()) {
                     return;
                 }
-                showDialog(activity, fileName, replay);
+                showBoardDialog(activity, fileName, replay);
             }
         });
     }
@@ -57,20 +58,22 @@ public final class DReplayViewer {
                 root.addView(titleView(activity, "DReplay Reader"));
                 TextView text = bodyText(activity, message == null ? "Не удалось открыть файл." : message, false);
                 root.addView(text, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-                Button close = button(activity, "OK", true);
+                TextView close = controlButton(activity, "OK", true, 96);
                 close.setOnClickListener(v -> dialog.dismiss());
-                LinearLayout buttons = new LinearLayout(activity);
-                buttons.setGravity(Gravity.RIGHT);
+                LinearLayout buttons = buttonRow(activity);
                 buttons.addView(close);
                 root.addView(buttons);
                 dialog.setContentView(root);
-                showSized(dialog, activity);
+                showSized(dialog, activity, 0.94f);
             }
         });
     }
 
-    private static void showDialog(final Activity activity, String fileName, final DReplayParser.Replay replay) {
+    private static void showBoardDialog(final Activity activity, String fileName, final DReplayParser.Replay replay) {
         final Dialog dialog = baseDialog(activity);
+        final Handler handler = new Handler(Looper.getMainLooper());
+        final boolean[] playing = new boolean[]{false};
+
         LinearLayout root = rootLayout(activity);
         root.addView(titleView(activity, replay.reportTitle()));
 
@@ -80,34 +83,109 @@ public final class DReplayViewer {
         }
         root.addView(subtitleView(activity, subtitle));
 
-        final String report = replay.buildReport();
+        final DReplayBoardView board = new DReplayBoardView(activity, replay);
+        int screenH = activity.getResources().getDisplayMetrics().heightPixels;
+        int boardHeight = Math.min(dp(activity, 530), Math.max(dp(activity, 390), (int) (screenH * 0.58f)));
+        root.addView(board, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, boardHeight));
+
+        final TextView stepText = subtitleView(activity, board.getStepText());
+        stepText.setPadding(0, dp(activity, 8), 0, dp(activity, 2));
+        root.addView(stepText);
+        board.setStepListener(view -> stepText.setText(view.getStepText()));
+
+        LinearLayout controls = buttonRow(activity);
+        controls.setGravity(Gravity.CENTER);
+        final TextView previous = controlButton(activity, "‹", false, 44);
+        final TextView play = controlButton(activity, "▶", true, 54);
+        final TextView next = controlButton(activity, "›", false, 44);
+        final TextView text = controlButton(activity, "Текст", false, 74);
+        final TextView copy = controlButton(activity, "Копия", false, 74);
+        final TextView close = controlButton(activity, "Закрыть", true, 90);
+
+        final Runnable[] tick = new Runnable[1];
+        tick[0] = new Runnable() {
+            @Override
+            public void run() {
+                if (!playing[0]) {
+                    return;
+                }
+                if (board.getStep() >= board.getMaxStep()) {
+                    playing[0] = false;
+                    play.setText("▶");
+                    return;
+                }
+                board.next();
+                handler.postDelayed(this, 700);
+            }
+        };
+
+        previous.setOnClickListener(v -> {
+            playing[0] = false;
+            play.setText("▶");
+            board.previous();
+        });
+        next.setOnClickListener(v -> {
+            playing[0] = false;
+            play.setText("▶");
+            board.next();
+        });
+        play.setOnClickListener(v -> {
+            if (playing[0]) {
+                playing[0] = false;
+                play.setText("▶");
+                return;
+            }
+            if (board.getStep() >= board.getMaxStep()) {
+                board.setStep(0);
+            }
+            playing[0] = true;
+            play.setText("Ⅱ");
+            handler.post(tick[0]);
+        });
+        text.setOnClickListener(v -> showReportDialog(activity, replay.buildReport()));
+        copy.setOnClickListener(v -> copyReport(activity, replay.buildReport()));
+        close.setOnClickListener(v -> dialog.dismiss());
+
+        controls.addView(previous);
+        controls.addView(play);
+        controls.addView(next);
+        root.addView(controls);
+
+        LinearLayout actions = buttonRow(activity);
+        actions.addView(text);
+        actions.addView(copy);
+        actions.addView(close);
+        root.addView(actions);
+
+        dialog.setOnDismissListener(d -> {
+            playing[0] = false;
+            handler.removeCallbacksAndMessages(null);
+        });
+        dialog.setContentView(root);
+        showSized(dialog, activity, 0.97f);
+    }
+
+    private static void showReportDialog(final Activity activity, final String report) {
+        final Dialog dialog = baseDialog(activity);
+        LinearLayout root = rootLayout(activity);
+        root.addView(titleView(activity, "Текст replay"));
         ScrollView scroll = new ScrollView(activity);
         scroll.setFillViewport(false);
         scroll.addView(bodyText(activity, report, true), new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.WRAP_CONTENT));
-        int maxHeight = Math.max(dp(activity, 260), (int) (activity.getResources().getDisplayMetrics().heightPixels * 0.62f));
+        int maxHeight = Math.max(dp(activity, 280), (int) (activity.getResources().getDisplayMetrics().heightPixels * 0.60f));
         root.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, maxHeight));
 
-        LinearLayout buttons = new LinearLayout(activity);
-        buttons.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
-        buttons.setPadding(0, dp(activity, 10), 0, 0);
-
-        Button copy = button(activity, "Копировать", false);
-        copy.setOnClickListener(v -> {
-            ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-            if (clipboard != null) {
-                clipboard.setPrimaryClip(ClipData.newPlainText("dreplay", report));
-                Toast.makeText(activity, "Скопировано", Toast.LENGTH_SHORT).show();
-            }
-        });
-        buttons.addView(copy);
-
-        Button close = button(activity, "Закрыть", true);
+        LinearLayout buttons = buttonRow(activity);
+        TextView copy = controlButton(activity, "Копировать", false, 104);
+        copy.setOnClickListener(v -> copyReport(activity, report));
+        TextView close = controlButton(activity, "Закрыть", true, 96);
         close.setOnClickListener(v -> dialog.dismiss());
+        buttons.addView(copy);
         buttons.addView(close);
         root.addView(buttons);
 
         dialog.setContentView(root);
-        showSized(dialog, activity);
+        showSized(dialog, activity, 0.94f);
     }
 
     private static Dialog baseDialog(Activity activity) {
@@ -120,11 +198,11 @@ public final class DReplayViewer {
     private static LinearLayout rootLayout(Context context) {
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(context, 18);
+        int pad = dp(context, 14);
         root.setPadding(pad, pad, pad, dp(context, 12));
         GradientDrawable background = new GradientDrawable();
         background.setColor(themeColor("key_dialogBackground", themeColor("key_windowBackgroundWhite", Color.WHITE)));
-        background.setCornerRadius(dp(context, 14));
+        background.setCornerRadius(dp(context, 16));
         root.setBackground(background);
         return root;
     }
@@ -134,9 +212,9 @@ public final class DReplayViewer {
         view.setText(text);
         view.setTextColor(themeColor("key_windowBackgroundWhiteBlackText", Color.rgb(32, 32, 32)));
         view.setTypeface(Typeface.DEFAULT_BOLD);
-        view.setTextSize(20);
+        view.setTextSize(19);
         view.setGravity(Gravity.LEFT);
-        view.setPadding(0, 0, 0, dp(context, 6));
+        view.setPadding(0, 0, 0, dp(context, 5));
         view.setSingleLine(false);
         return view;
     }
@@ -145,8 +223,8 @@ public final class DReplayViewer {
         TextView view = new TextView(context);
         view.setText(text);
         view.setTextColor(themeColor("key_windowBackgroundWhiteGrayText", Color.rgb(115, 115, 115)));
-        view.setTextSize(13);
-        view.setPadding(0, 0, 0, dp(context, 12));
+        view.setTextSize(12);
+        view.setPadding(0, 0, 0, dp(context, 10));
         view.setSingleLine(false);
         return view;
     }
@@ -164,29 +242,48 @@ public final class DReplayViewer {
         int pad = dp(context, 10);
         GradientDrawable background = new GradientDrawable();
         background.setColor(themeColor("key_windowBackgroundGray", Color.rgb(245, 245, 245)));
-        background.setCornerRadius(dp(context, 8));
+        background.setCornerRadius(dp(context, 9));
         view.setBackground(background);
         view.setPadding(pad, pad, pad, pad);
         return view;
     }
 
-    private static Button button(Context context, String text, boolean accent) {
-        Button button = new Button(context);
+    private static LinearLayout buttonRow(Context context) {
+        LinearLayout buttons = new LinearLayout(context);
+        buttons.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setPadding(0, dp(context, 8), 0, 0);
+        return buttons;
+    }
+
+    private static TextView controlButton(Context context, String text, boolean accent, int minWidthDp) {
+        TextView button = new TextView(context);
         button.setText(text);
-        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setTextSize(14);
         button.setTextColor(accent ? themeColor("key_featuredStickers_buttonText", Color.WHITE) : themeColor("key_featuredStickers_addButton", Color.rgb(45, 136, 220)));
         GradientDrawable background = new GradientDrawable();
-        background.setCornerRadius(dp(context, 8));
-        background.setColor(accent ? themeColor("key_featuredStickers_addButton", Color.rgb(45, 136, 220)) : Color.TRANSPARENT);
+        background.setCornerRadius(dp(context, 10));
+        background.setColor(accent ? themeColor("key_featuredStickers_addButton", Color.rgb(45, 136, 220)) : Color.argb(22, 45, 136, 220));
         button.setBackground(background);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(context, 42));
-        params.leftMargin = dp(context, 8);
+        int hPad = dp(context, 10);
+        button.setPadding(hPad, 0, hPad, 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(Math.max(dp(context, minWidthDp), LinearLayout.LayoutParams.WRAP_CONTENT), dp(context, 42));
+        params.leftMargin = dp(context, 6);
         button.setLayoutParams(params);
-        button.setMinWidth(dp(context, 96));
         return button;
     }
 
-    private static void showSized(Dialog dialog, Activity activity) {
+    private static void copyReport(Activity activity, String report) {
+        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard != null) {
+            clipboard.setPrimaryClip(ClipData.newPlainText("dreplay", report));
+            Toast.makeText(activity, "Скопировано", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private static void showSized(Dialog dialog, Activity activity, float widthRatio) {
         dialog.show();
         Window window = dialog.getWindow();
         if (window == null) {
@@ -198,14 +295,14 @@ public final class DReplayViewer {
         attrs.dimAmount = 0.32f;
         window.setAttributes(attrs);
         DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
-        window.setLayout(Math.min((int) (metrics.widthPixels * 0.94f), dp(activity, 560)), WindowManager.LayoutParams.WRAP_CONTENT);
+        window.setLayout(Math.min((int) (metrics.widthPixels * widthRatio), dp(activity, 620)), WindowManager.LayoutParams.WRAP_CONTENT);
     }
 
-    private static int dp(Context context, int value) {
+    static int dp(Context context, int value) {
         return Math.round(value * context.getResources().getDisplayMetrics().density);
     }
 
-    private static int themeColor(String keyName, int fallback) {
+    static int themeColor(String keyName, int fallback) {
         try {
             Class<?> theme = DReplayViewer.class.getClassLoader().loadClass("org.telegram.ui.ActionBar.Theme");
             Field keyField = theme.getField(keyName);

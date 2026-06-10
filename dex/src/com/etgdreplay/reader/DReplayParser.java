@@ -7,11 +7,11 @@ import java.util.List;
 import java.util.Locale;
 
 public final class DReplayParser {
-    private static final int ACTION_ATTACK = 5;
-    private static final int ACTION_BEAT = 6;
-    private static final int ACTION_TRANSFER = 7;
-    private static final int ACTION_TAKE = 8;
-    private static final int ACTION_DONE = 9;
+    public static final int ACTION_ATTACK = 5;
+    public static final int ACTION_BEAT = 6;
+    public static final int ACTION_TRANSFER = 7;
+    public static final int ACTION_TAKE = 8;
+    public static final int ACTION_DONE = 9;
 
     private DReplayParser() {
     }
@@ -272,7 +272,7 @@ public final class DReplayParser {
             return Math.max(0, deck.size() - handCards);
         }
 
-        private boolean hasTransfer() {
+        public boolean hasTransfer() {
             for (Action action : actions) {
                 if (action.code == ACTION_TRANSFER) {
                     return true;
@@ -288,7 +288,7 @@ public final class DReplayParser {
             return -1;
         }
 
-        private String actionText(Action action) {
+        public String actionText(Action action) {
             if (action.code == ACTION_ATTACK) {
                 return "ходит/подкидывает " + cardLabel(parseCard(action.arg1));
             }
@@ -308,18 +308,22 @@ public final class DReplayParser {
             return "код " + action.code + (args.length() == 0 ? "" : " · " + args);
         }
 
-        private String playerName(int index) {
+        public String playerName(int index) {
             if (index >= 0 && index < players.size()) {
                 return players.get(index).name;
             }
             return "Игрок " + index;
         }
 
-        private String cardLabel(Card card) {
+        public String cardLabel(Card card) {
             if (card == null) {
                 return "-";
             }
             return card.label(trump == null ? -1 : trump.suit);
+        }
+
+        public String formatActionTime(Action action) {
+            return action == null ? "00:00.000" : formatTime(action.timeMs);
         }
     }
 
@@ -368,6 +372,51 @@ public final class DReplayParser {
             }
             String mark = suit == trumpSuit ? "*" : "";
             return "S" + suit + ":" + rankText + mark + " (" + raw + ")";
+        }
+
+        public String rankLabel() {
+            if (rank == 11) {
+                return "J";
+            }
+            if (rank == 12) {
+                return "Q";
+            }
+            if (rank == 13) {
+                return "K";
+            }
+            if (rank == 14) {
+                return "A";
+            }
+            if (rank == 15) {
+                return "JK";
+            }
+            if (rank > 0) {
+                return String.format(Locale.US, "%d", rank);
+            }
+            return "?";
+        }
+
+        public String suitGlyph() {
+            if (rank == 15) {
+                return extra == 2 ? "★" : "☆";
+            }
+            if (suit == 0) {
+                return "♣";
+            }
+            if (suit == 1) {
+                return "♦";
+            }
+            if (suit == 2) {
+                return "♥";
+            }
+            if (suit == 3) {
+                return "♠";
+            }
+            return "•";
+        }
+
+        public boolean isRed() {
+            return rank == 15 || suit == 1 || suit == 2;
         }
     }
 
